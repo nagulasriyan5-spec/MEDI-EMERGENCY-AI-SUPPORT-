@@ -1,11 +1,35 @@
 import 'dotenv/config';
+import fs from 'node:fs/promises';
 import http from 'node:http';
-import { URL } from 'node:url';
+import path from 'node:path';
+import { URL, fileURLToPath } from 'node:url';
 import { createDataStore } from './dataStore.js';
 import { loadConfig } from './config.js';
 
 const config = loadConfig();
 const PORT = config.server.port;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const frontendDistDir = path.resolve(__dirname, '../../app/dist');
+const frontendIndexFile = path.join(frontendDistDir, 'index.html');
+
+const staticContentTypes = {
+  '.css': 'text/css; charset=utf-8',
+  '.gif': 'image/gif',
+  '.html': 'text/html; charset=utf-8',
+  '.ico': 'image/x-icon',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.js': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.txt': 'text/plain; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+};
 
 const hospitals = [
   { id: 1, key: 'citygeneral', name: 'Government General Hospital' },
@@ -50,6 +74,8 @@ const store = createDataStore({
   severities,
   mysqlConfig: config.mysql,
 });
+let storeInitState = 'starting';
+let storeInitError = null;
 
 const sendJson = (res, statusCode, payload) => {
   res.writeHead(statusCode, {
@@ -59,6 +85,59 @@ const sendJson = (res, statusCode, payload) => {
     'Access-Control-Allow-Headers': 'Content-Type',
   });
   res.end(JSON.stringify(payload));
+};
+
+const decodePathname = (pathname) => {
+  try {
+    return decodeURIComponent(pathname);
+  } catch {
+    return pathname;
+  }
+};
+
+const isPathInside = (rootDir, targetPath) => {
+  const relative = path.relative(rootDir, targetPath);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+};
+
+const sendStaticFile = async (res, filePath, method) => {
+  const extension = path.extname(filePath).toLowerCase();
+  const contentType = staticContentTypes[extension] || 'application/octet-stream';
+  const body = await fs.readFile(filePath);
+  res.writeHead(200, {
+    'Content-Type': contentType,
+    'Cache-Control': extension === '.html' ? 'no-cache' : 'public, max-age=31536000, immutable',
+  });
+  if (method === 'HEAD') {
+    return res.end();
+  }
+  return res.end(body);
+};
+
+const tryServeFrontend = async (pathname, res, method) => {
+  const decodedPath = decodePathname(pathname);
+  const normalized = decodedPath.replace(/^\/+/, '');
+  const relativePath = normalized || 'index.html';
+  const requestedPath = path.resolve(frontendDistDir, relativePath);
+
+  if (isPathInside(frontendDistDir, requestedPath)) {
+    try {
+      const stat = await fs.stat(requestedPath);
+      if (stat.isFile()) {
+        await sendStaticFile(res, requestedPath, method);
+        return true;
+      }
+    } catch {
+      // Ignore and fallback to SPA entry file.
+    }
+  }
+
+  try {
+    await sendStaticFile(res, frontendIndexFile, method);
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 const readJsonBody = (req) =>
@@ -187,6 +266,8 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         service: 'backend',
         mode: store.getMode(),
+        initState: storeInitState,
+        initError: storeInitError,
         timestamp: new Date().toISOString(),
       });
     }
@@ -682,6 +763,13 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { data: stats });
     }
 
+    if ((req.method === 'GET' || req.method === 'HEAD') && !pathname.startsWith('/api/')) {
+      const served = await tryServeFrontend(pathname, res, req.method);
+      if (served) {
+        return;
+      }
+    }
+
     return sendJson(res, 404, { error: 'Not found' });
   } catch (error) {
     return sendJson(res, 500, { error: error instanceof Error ? error.message : 'Server error' });
@@ -689,8 +777,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 const startServer = async () => {
-  await store.init();
-
   const tickInterval = setInterval(() => {
     store.tickAlerts().catch((error) => {
       // eslint-disable-next-line no-console
@@ -740,12 +826,25 @@ const startServer = async () => {
     });
   });
 
-  server.listen(PORT, () => {
+  server.listen(PORT, '0.0.0.0', () => {
     // eslint-disable-next-line no-console
     console.log(`Backend running at http://localhost:${PORT}`);
     // eslint-disable-next-line no-console
-    console.log(`Backend mode: ${store.getMode()}`);
+    console.log(`Backend mode: ${store.getMode()} (initializing datastore in background)`);
   });
+
+  store.init()
+    .then(() => {
+      storeInitState = 'ready';
+      // eslint-disable-next-line no-console
+      console.log(`Datastore initialized. Active mode: ${store.getMode()}`);
+    })
+    .catch((error) => {
+      storeInitState = 'failed';
+      storeInitError = error instanceof Error ? error.message : String(error);
+      // eslint-disable-next-line no-console
+      console.error('Datastore initialization failed:', storeInitError);
+    });
 };
 
 startServer().catch((error) => {
