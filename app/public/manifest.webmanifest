@@ -1,0 +1,45 @@
+{
+  "id": "/",
+  "name": "Medi - EMERGENCY AI SUPPORT",
+  "short_name": "Medi - EMERGENCY AI SUPPORT",
+  "description": "Emergency medical support, nearby hospitals, alerts, and appointments.",
+  "lang": "en-US",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "display_override": ["standalone", "minimal-ui", "browser"],
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#020617",
+  "theme_color": "#0f172a",
+  "categories": ["medical", "health", "utilities", "productivity"],
+  "prefer_related_applications": false,
+  "shortcuts": [
+    {
+      "name": "Emergency Contacts",
+      "short_name": "Emergency",
+      "url": "./?quick=emergency",
+      "description": "Open emergency helpline contacts quickly."
+    },
+    {
+      "name": "Hospital Dashboard",
+      "short_name": "Hospital",
+      "url": "./?portal=hospital",
+      "description": "Open hospital portal login directly."
+    }
+  ],
+  "icons": [
+    {
+      "src": "./icons/medirescue-plus-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/medirescue-plus-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
